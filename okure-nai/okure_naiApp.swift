@@ -76,19 +76,6 @@ class MenuBarWindowDelegate: NSObject, NSWindowDelegate {
     }
 }
 
-// アラーム追加ウィンドウ用デリゲート
-class AddAlarmWindowDelegate: NSObject, NSWindowDelegate {
-    private let onClose: () -> Void
-    
-    init(onClose: @escaping () -> Void) {
-        self.onClose = onClose
-    }
-    
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        onClose()
-        return true
-    }
-}
 
 // アラーム管理用のObservableObject
 class AlarmManager: ObservableObject {
@@ -243,9 +230,8 @@ struct MenuBarView: View {
     @StateObject private var alarmStore = AlarmStore()
     @State private var currentTime = Date()
     @State private var showingAddAlarm = false
-    @State private var selectedHour = Calendar.current.component(.hour, from: Date())
-    @State private var selectedMinute = Calendar.current.component(.minute, from: Date())
-    @State private var timeInput = ""
+    @State private var selectedHour = 9
+    @State private var selectedMinute = 0
     
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
@@ -286,8 +272,10 @@ struct MenuBarView: View {
             
             Divider()
             
-            // アラーム一覧
-            if alarmStore.alarms.isEmpty {
+            // アラーム追加画面または一覧表示
+            if showingAddAlarm {
+                MenuBarAddAlarmView(alarmStore: alarmStore, selectedHour: $selectedHour, selectedMinute: $selectedMinute)
+            } else if alarmStore.alarms.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "alarm")
                         .font(.title2)
@@ -313,40 +301,42 @@ struct MenuBarView: View {
             
             Divider()
             
-            // ボタン
-            VStack(spacing: 8) {
-                Button(action: { showingAddAlarm = true }) {
-                    HStack {
-                        Image(systemName: "plus.circle.fill")
-                        Text("アラーム追加")
+            // ボタン（アラーム追加画面でない場合のみ表示）
+            if !showingAddAlarm {
+                VStack(spacing: 8) {
+                    Button(action: { showingAddAlarm = true }) {
+                        HStack {
+                            Image(systemName: "plus.circle.fill")
+                            Text("アラーム追加")
+                        }
+                        .font(.subheadline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 32)
+                        .background(Color.blue)
+                        .cornerRadius(6)
                     }
-                    .font(.subheadline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 32)
-                    .background(Color.blue)
-                    .cornerRadius(6)
-                }
-                .buttonStyle(.plain)
-                
-                Button(action: { menuBarManager.toggleMainWindow() }) {
-                    HStack {
-                        Image(systemName: "gear")
-                        Text("設定")
+                    .buttonStyle(.plain)
+                    
+                    Button(action: { menuBarManager.toggleMainWindow() }) {
+                        HStack {
+                            Image(systemName: "gear")
+                            Text("設定")
+                        }
+                        .font(.subheadline)
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 32)
+                        .background(Color.gray.opacity(0.2))
+                        .cornerRadius(6)
                     }
-                    .font(.subheadline)
-                    .foregroundColor(.primary)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 32)
-                    .background(Color.gray.opacity(0.2))
-                    .cornerRadius(6)
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
         }
-        .frame(width: 280)
+        .frame(width: showingAddAlarm ? 320 : 280)
         .onReceive(timer) { _ in
             currentTime = Date()
             checkAlarms()
@@ -354,13 +344,6 @@ struct MenuBarView: View {
             // メニューバーウィンドウの設定を定期的に確認
             DispatchQueue.main.async {
                 self.ensureMenuBarWindowConfigured()
-            }
-        }
-        .onChange(of: showingAddAlarm) { isShowing in
-            if isShowing {
-                showAddAlarmWindow()
-            } else {
-                hideAddAlarmWindow()
             }
         }
         .sheet(isPresented: $menuBarManager.showMainWindow) {
@@ -423,45 +406,6 @@ struct MenuBarView: View {
         }
     }
     
-    private func showAddAlarmWindow() {
-        // 既存のアラーム追加ウィンドウがあれば閉じる
-        hideAddAlarmWindow()
-        
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 300, height: 350),
-            styleMask: [.titled, .closable],
-            backing: .buffered,
-            defer: false
-        )
-        
-        window.title = "アラーム追加"
-        window.identifier = NSUserInterfaceItemIdentifier("add-alarm-window")
-        window.level = .floating
-        window.center()
-        window.isReleasedWhenClosed = false
-        window.delegate = AddAlarmWindowDelegate { [self] in
-            showingAddAlarm = false
-        }
-        
-        let hostingView = NSHostingView(rootView: MenuBarAddAlarmView(
-            alarmStore: alarmStore,
-            selectedHour: $selectedHour,
-            selectedMinute: $selectedMinute,
-            timeInput: $timeInput
-        ))
-        
-        window.contentView = hostingView
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-    
-    private func hideAddAlarmWindow() {
-        for window in NSApp.windows {
-            if window.identifier?.rawValue == "add-alarm-window" {
-                window.close()
-            }
-        }
-    }
 }
 
 // メニューバー用アラーム行
@@ -500,9 +444,9 @@ struct MenuBarAddAlarmView: View {
     let alarmStore: AlarmStore
     @Binding var selectedHour: Int
     @Binding var selectedMinute: Int
-    @Binding var timeInput: String
     
     @State private var selectedWeekdays: Set<Weekday> = []
+    @State private var hoveredHour: Int? = nil
     
     @Environment(\.dismiss) private var dismiss
     
@@ -512,19 +456,61 @@ struct MenuBarAddAlarmView: View {
                 .font(.headline)
                 .padding(.top, 20)
             
-            // 時刻直接入力
+            // 時刻選択ボタン
             VStack(alignment: .leading, spacing: 8) {
-                Text("時刻入力（例：2345 → 23:45）")
+                Text("時刻選択")
                     .font(.subheadline)
+                    .fontWeight(.medium)
                 
-                TextField("2345", text: $timeInput)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .onChange(of: timeInput) { newValue in
-                        parseTimeInput(newValue)
+                ScrollView {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                        ForEach(9...20, id: \.self) { hour in
+                            VStack(spacing: 4) {
+                                // メインの時間ボタン（:00）
+                                Button(action: {
+                                    selectedHour = hour
+                                    selectedMinute = 0
+                                }) {
+                                    Text(String(format: "%d:00", hour))
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(isTimeSelected(hour: hour, minute: 0) ? .white : .primary)
+                                        .frame(width: 70, height: 32)
+                                        .background(isTimeSelected(hour: hour, minute: 0) ? Color.blue : Color.gray.opacity(0.2))
+                                        .cornerRadius(8)
+                                }
+                                .buttonStyle(.plain)
+                                .onHover { isHovering in
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        hoveredHour = isHovering ? hour : nil
+                                    }
+                                }
+                                
+                                // ホバー時の:30オプション
+                                if hoveredHour == hour {
+                                    Button(action: {
+                                        selectedHour = hour
+                                        selectedMinute = 30
+                                    }) {
+                                        Text(String(format: "%d:30", hour))
+                                            .font(.caption)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(isTimeSelected(hour: hour, minute: 30) ? .white : .primary)
+                                            .frame(width: 70, height: 24)
+                                            .background(isTimeSelected(hour: hour, minute: 30) ? Color.blue : Color.gray.opacity(0.3))
+                                            .cornerRadius(6)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .transition(.scale.combined(with: .opacity))
+                                }
+                            }
+                        }
                     }
-                    .onTapGesture {
-                        // タップ時にフォーカスを維持
-                    }
+                    .padding(.horizontal, 4)
+                }
+                .frame(height: 150)
+                .background(Color.gray.opacity(0.1))
+                .cornerRadius(8)
             }
             .padding(.horizontal, 20)
             
@@ -602,34 +588,6 @@ struct MenuBarAddAlarmView: View {
         .padding()
     }
     
-    private func parseTimeInput(_ input: String) {
-        let numbers = input.filter { $0.isNumber }
-        
-        if numbers.count >= 3 {
-            let hourString = String(numbers.prefix(numbers.count - 2))
-            let minuteString = String(numbers.suffix(2))
-            
-            if let hour = Int(hourString), let minute = Int(minuteString) {
-                if hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 {
-                    selectedHour = hour
-                    selectedMinute = minute
-                }
-            }
-        } else if numbers.count == 2 {
-            if let minute = Int(numbers) {
-                if minute >= 0 && minute <= 59 {
-                    selectedMinute = minute
-                }
-            }
-        } else if numbers.count == 1 {
-            if let minute = Int(numbers) {
-                selectedMinute = (selectedMinute / 10) * 10 + minute
-                if selectedMinute > 59 {
-                    selectedMinute = minute
-                }
-            }
-        }
-    }
     
     private var weekdayDisplayString: String {
         if selectedWeekdays.isEmpty {
@@ -644,5 +602,9 @@ struct MenuBarAddAlarmView: View {
             let sortedWeekdays = selectedWeekdays.sorted { $0.rawValue < $1.rawValue }
             return sortedWeekdays.map { $0.displayName }.joined(separator: ",")
         }
+    }
+    
+    private func isTimeSelected(hour: Int, minute: Int) -> Bool {
+        return selectedHour == hour && selectedMinute == minute
     }
 }
