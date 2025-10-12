@@ -12,15 +12,16 @@ import AppKit
 @main
 struct okure_naiApp: App {
     @StateObject private var alarmManager = AlarmManager()
+    @StateObject private var menuBarManager = MenuBarManager()
     
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        // メニューバーアプリ
+        MenuBarExtra("アラーム", systemImage: "alarm") {
+            MenuBarView()
                 .environmentObject(alarmManager)
+                .environmentObject(menuBarManager)
         }
-        .commands {
-            CommandGroup(replacing: .newItem) { }
-        }
+        .menuBarExtraStyle(.window)
         
         // アラーム表示用のウィンドウ
         Window("アラーム", id: "alarm-panel") {
@@ -33,6 +34,7 @@ struct okure_naiApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .defaultPosition(.center)
+        .windowResizability(.contentSize)
     }
 }
 
