@@ -8,6 +8,7 @@
 import SwiftUI
 import Combine
 import AppKit
+import UserNotifications
 
 @main
 struct okure_naiApp: App {
@@ -20,6 +21,12 @@ struct okure_naiApp: App {
             MenuBarView()
                 .environmentObject(alarmManager)
                 .environmentObject(menuBarManager)
+                .onAppear {
+                    // メニューバーウィンドウの動作を調整
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        self.configureMenuBarWindow()
+                    }
+                }
         }
         .menuBarExtraStyle(.window)
         
@@ -35,6 +42,51 @@ struct okure_naiApp: App {
         .windowResizability(.contentSize)
         .defaultPosition(.center)
         .windowResizability(.contentSize)
+    }
+    
+    private func configureMenuBarWindow() {
+        // メニューバーウィンドウを探して設定
+        for window in NSApp.windows {
+            if window.identifier?.rawValue == "MenuBarExtra" {
+                window.level = .floating
+                window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+                window.isReleasedWhenClosed = false
+                
+                // 外側クリックで閉じないようにする
+                if let windowDelegate = window.delegate {
+                    // ウィンドウのデリゲートを設定
+                } else {
+                    window.delegate = MenuBarWindowDelegate()
+                }
+                break
+            }
+        }
+    }
+}
+
+// メニューバーウィンドウ用デリゲート
+class MenuBarWindowDelegate: NSObject, NSWindowDelegate {
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // 外側クリックでも閉じない
+        return false
+    }
+    
+    func windowWillClose(_ notification: Notification) {
+        // ウィンドウが閉じようとするのを防ぐ
+    }
+}
+
+// アラーム追加ウィンドウ用デリゲート
+class AddAlarmWindowDelegate: NSObject, NSWindowDelegate {
+    private let onClose: () -> Void
+    
+    init(onClose: @escaping () -> Void) {
+        self.onClose = onClose
+    }
+    
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        onClose()
+        return true
     }
 }
 
@@ -298,13 +350,26 @@ struct MenuBarView: View {
         .onReceive(timer) { _ in
             currentTime = Date()
             checkAlarms()
+            
+            // メニューバーウィンドウの設定を定期的に確認
+            DispatchQueue.main.async {
+                self.ensureMenuBarWindowConfigured()
+            }
         }
-        .sheet(isPresented: $showingAddAlarm) {
-            MenuBarAddAlarmView(alarmStore: alarmStore, selectedHour: $selectedHour, selectedMinute: $selectedMinute, timeInput: $timeInput)
+        .onChange(of: showingAddAlarm) { isShowing in
+            if isShowing {
+                showAddAlarmWindow()
+            } else {
+                hideAddAlarmWindow()
+            }
         }
         .sheet(isPresented: $menuBarManager.showMainWindow) {
             ContentView()
                 .environmentObject(alarmManager)
+        }
+        .background(Color.clear)
+        .onTapGesture {
+            // パネル内をクリックしても閉じないようにする
         }
     }
     
@@ -313,14 +378,21 @@ struct MenuBarView: View {
         guard !alarmManager.showAlarmPanel else { return }
         
         let calendar = Calendar.current
-        let currentComponents = calendar.dateComponents([.hour, .minute], from: currentTime)
+        let currentComponents = calendar.dateComponents([.hour, .minute, .weekday], from: currentTime)
         
         for alarm in enabledAlarms {
-            if currentComponents.hour == alarm.hour &&
-               currentComponents.minute == alarm.minute {
-                triggerAlarm(alarm)
-                break
+            // 時刻のチェック
+            guard currentComponents.hour == alarm.hour &&
+                  currentComponents.minute == alarm.minute else { continue }
+            
+            // 繰り返しアラームの場合、曜日をチェック
+            if alarm.isRecurring {
+                guard let currentWeekday = Weekday(rawValue: currentComponents.weekday ?? 1),
+                      alarm.weekdays.contains(currentWeekday) else { continue }
             }
+            
+            triggerAlarm(alarm)
+            break
         }
     }
     
@@ -338,6 +410,58 @@ struct MenuBarView: View {
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
     }
+    
+    private func ensureMenuBarWindowConfigured() {
+        // メニューバーウィンドウが正しく設定されているか確認
+        for window in NSApp.windows {
+            if window.identifier?.rawValue == "MenuBarExtra" {
+                if window.delegate == nil {
+                    window.delegate = MenuBarWindowDelegate()
+                }
+                break
+            }
+        }
+    }
+    
+    private func showAddAlarmWindow() {
+        // 既存のアラーム追加ウィンドウがあれば閉じる
+        hideAddAlarmWindow()
+        
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 350),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        
+        window.title = "アラーム追加"
+        window.identifier = NSUserInterfaceItemIdentifier("add-alarm-window")
+        window.level = .floating
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.delegate = AddAlarmWindowDelegate { [self] in
+            showingAddAlarm = false
+        }
+        
+        let hostingView = NSHostingView(rootView: MenuBarAddAlarmView(
+            alarmStore: alarmStore,
+            selectedHour: $selectedHour,
+            selectedMinute: $selectedMinute,
+            timeInput: $timeInput
+        ))
+        
+        window.contentView = hostingView
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+    
+    private func hideAddAlarmWindow() {
+        for window in NSApp.windows {
+            if window.identifier?.rawValue == "add-alarm-window" {
+                window.close()
+            }
+        }
+    }
 }
 
 // メニューバー用アラーム行
@@ -346,20 +470,26 @@ struct MenuBarAlarmRow: View {
     let alarmStore: AlarmStore
     
     var body: some View {
-        HStack {
-            Text(alarm.timeString)
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .foregroundColor(alarm.isEnabled ? .primary : .secondary)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(alarm.timeString)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(alarm.isEnabled ? .primary : .secondary)
+                
+                Spacer()
+                
+                Toggle("", isOn: Binding(
+                    get: { alarm.isEnabled },
+                    set: { _ in alarmStore.toggleAlarm(alarm) }
+                ))
+                .toggleStyle(SwitchToggleStyle())
+                .scaleEffect(0.8)
+            }
             
-            Spacer()
-            
-            Toggle("", isOn: Binding(
-                get: { alarm.isEnabled },
-                set: { _ in alarmStore.toggleAlarm(alarm) }
-            ))
-            .toggleStyle(SwitchToggleStyle())
-            .scaleEffect(0.8)
+            Text(alarm.weekdayDisplayString)
+                .font(.caption)
+                .foregroundColor(.secondary)
         }
         .padding(.vertical, 4)
     }
@@ -371,6 +501,8 @@ struct MenuBarAddAlarmView: View {
     @Binding var selectedHour: Int
     @Binding var selectedMinute: Int
     @Binding var timeInput: String
+    
+    @State private var selectedWeekdays: Set<Weekday> = []
     
     @Environment(\.dismiss) private var dismiss
     
@@ -390,6 +522,9 @@ struct MenuBarAddAlarmView: View {
                     .onChange(of: timeInput) { newValue in
                         parseTimeInput(newValue)
                     }
+                    .onTapGesture {
+                        // タップ時にフォーカスを維持
+                    }
             }
             .padding(.horizontal, 20)
             
@@ -397,6 +532,45 @@ struct MenuBarAddAlarmView: View {
             Text("設定時刻: \(String(format: "%02d:%02d", selectedHour, selectedMinute))")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
+            
+            // 曜日選択
+            VStack(alignment: .leading, spacing: 8) {
+                Text("繰り返し設定")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                HStack(spacing: 4) {
+                    ForEach(Weekday.allCases, id: \.rawValue) { weekday in
+                        Button(action: {
+                            if selectedWeekdays.contains(weekday) {
+                                selectedWeekdays.remove(weekday)
+                            } else {
+                                selectedWeekdays.insert(weekday)
+                            }
+                        }) {
+                            Text(weekday.displayName)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundColor(selectedWeekdays.contains(weekday) ? .white : .primary)
+                                .frame(width: 24, height: 24)
+                                .background(selectedWeekdays.contains(weekday) ? Color.blue : Color.gray.opacity(0.2))
+                                .cornerRadius(12)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                
+                if selectedWeekdays.isEmpty {
+                    Text("一回限り")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text(weekdayDisplayString)
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                }
+            }
+            .padding(.horizontal, 20)
             
             Spacer()
             
@@ -411,7 +585,8 @@ struct MenuBarAddAlarmView: View {
                 .cornerRadius(6)
                 
                 Button("保存") {
-                    let newAlarm = Alarm(hour: selectedHour, minute: selectedMinute)
+                    var newAlarm = Alarm(hour: selectedHour, minute: selectedMinute)
+                    newAlarm.weekdays = selectedWeekdays
                     alarmStore.addAlarm(newAlarm)
                     dismiss()
                 }
@@ -424,7 +599,7 @@ struct MenuBarAddAlarmView: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 20)
         }
-        .frame(width: 300, height: 250)
+        .padding()
     }
     
     private func parseTimeInput(_ input: String) {
@@ -453,6 +628,21 @@ struct MenuBarAddAlarmView: View {
                     selectedMinute = minute
                 }
             }
+        }
+    }
+    
+    private var weekdayDisplayString: String {
+        if selectedWeekdays.isEmpty {
+            return "一回限り"
+        } else if selectedWeekdays.count == 7 {
+            return "毎日"
+        } else if selectedWeekdays == Set([Weekday.monday, .tuesday, .wednesday, .thursday, .friday]) {
+            return "平日"
+        } else if selectedWeekdays == Set([Weekday.saturday, .sunday]) {
+            return "週末"
+        } else {
+            let sortedWeekdays = selectedWeekdays.sorted { $0.rawValue < $1.rawValue }
+            return sortedWeekdays.map { $0.displayName }.joined(separator: ",")
         }
     }
 }
