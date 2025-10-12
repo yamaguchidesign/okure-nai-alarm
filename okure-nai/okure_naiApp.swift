@@ -397,6 +397,7 @@ struct MenuBarAddAlarmView: View {
     
     @State private var selectedWeekdays: Set<Weekday> = []
     @State private var hoveredHour: Int? = nil
+    @State private var hideTimer: Timer? = nil
     
     @Environment(\.dismiss) private var dismiss
     
@@ -431,8 +432,20 @@ struct MenuBarAddAlarmView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .onHover { isHovering in
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        hoveredHour = isHovering ? hour : nil
+                                    if isHovering {
+                                        // ホバー時は即座に表示
+                                        hideTimer?.invalidate()
+                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                            hoveredHour = hour
+                                        }
+                                    } else {
+                                        // ホバー解除時は少し遅延してから非表示
+                                        hideTimer?.invalidate()
+                                        hideTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { _ in
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                hoveredHour = nil
+                                            }
+                                        }
                                     }
                                 }
                                 
