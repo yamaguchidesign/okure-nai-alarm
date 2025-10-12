@@ -224,12 +224,10 @@ struct MenuBarView: View {
     @EnvironmentObject var alarmManager: AlarmManager
     @EnvironmentObject var menuBarManager: MenuBarManager
     @StateObject private var alarmStore = AlarmStore()
-    @State private var currentTime = Date()
     @State private var showingAddAlarm = false
     @State private var selectedHour = 9
     @State private var selectedMinute = 0
     
-    let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -243,22 +241,6 @@ struct MenuBarView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
-            
-            Divider()
-            
-            // 現在時刻
-            HStack {
-                Text("現在時刻:")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                
-                Spacer()
-                
-                Text(currentTime, style: .time)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-            }
-            .padding(.horizontal, 16)
             
             Divider()
             
@@ -313,8 +295,7 @@ struct MenuBarView: View {
             }
         }
         .frame(width: showingAddAlarm ? 320 : 280)
-        .onReceive(timer) { _ in
-            currentTime = Date()
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
             checkAlarms()
             
             // メニューバーウィンドウの設定を定期的に確認
@@ -333,7 +314,7 @@ struct MenuBarView: View {
         guard !alarmManager.showAlarmPanel else { return }
         
         let calendar = Calendar.current
-        let currentComponents = calendar.dateComponents([.hour, .minute, .weekday], from: currentTime)
+        let currentComponents = calendar.dateComponents([.hour, .minute, .weekday], from: Date())
         
         for alarm in enabledAlarms {
             // 時刻のチェック
