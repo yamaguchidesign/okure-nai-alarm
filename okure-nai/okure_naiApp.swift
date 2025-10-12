@@ -287,6 +287,7 @@ struct MenuBarView: View {
                         ForEach(alarmStore.alarms) { alarm in
                             MenuBarAlarmRow(alarm: alarm, alarmStore: alarmStore)
                         }
+                        .onDelete(perform: deleteAlarm)
                     }
                     .padding(.horizontal, 16)
                 }
@@ -388,6 +389,10 @@ struct MenuBarView: View {
         UNUserNotificationCenter.current().add(request)
     }
     
+    private func deleteAlarm(at offsets: IndexSet) {
+        alarmStore.deleteAlarm(at: offsets)
+    }
+    
     private func ensureMenuBarWindowConfigured() {
         // メニューバーウィンドウが正しく設定されているか確認
         for window in NSApp.windows {
@@ -416,13 +421,6 @@ struct MenuBarAlarmRow: View {
                     .foregroundColor(alarm.isEnabled ? .primary : .secondary)
                 
                 Spacer()
-                
-                Toggle("", isOn: Binding(
-                    get: { alarm.isEnabled },
-                    set: { _ in alarmStore.toggleAlarm(alarm) }
-                ))
-                .toggleStyle(SwitchToggleStyle())
-                .scaleEffect(0.8)
             }
             
             Text(alarm.weekdayDisplayString)
