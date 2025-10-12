@@ -282,15 +282,13 @@ struct MenuBarView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        ForEach(alarmStore.alarms) { alarm in
-                            MenuBarAlarmRow(alarm: alarm, alarmStore: alarmStore)
-                        }
-                        .onDelete(perform: deleteAlarm)
+                List {
+                    ForEach(alarmStore.alarms) { alarm in
+                        MenuBarAlarmRow(alarm: alarm, alarmStore: alarmStore)
                     }
-                    .padding(.horizontal, 16)
+                    .onDelete(perform: deleteAlarm)
                 }
+                .listStyle(PlainListStyle())
                 .frame(maxHeight: 200)
             }
             
