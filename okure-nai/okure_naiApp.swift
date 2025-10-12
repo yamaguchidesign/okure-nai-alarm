@@ -263,8 +263,11 @@ struct MenuBarView: View {
                 List {
                     ForEach(alarmStore.alarms) { alarm in
                         MenuBarAlarmRow(alarm: alarm, alarmStore: alarmStore)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                     }
-                    .onDelete(perform: deleteAlarm)
+                    .onDelete { indexSet in
+                        alarmStore.deleteAlarm(at: indexSet)
+                    }
                 }
                 .listStyle(PlainListStyle())
                 .frame(maxHeight: 200)
@@ -347,9 +350,6 @@ struct MenuBarView: View {
         UNUserNotificationCenter.current().add(request)
     }
     
-    private func deleteAlarm(at offsets: IndexSet) {
-        alarmStore.deleteAlarm(at: offsets)
-    }
     
     private func ensureMenuBarWindowConfigured() {
         // メニューバーウィンドウが正しく設定されているか確認
