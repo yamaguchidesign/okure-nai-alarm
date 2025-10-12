@@ -246,7 +246,7 @@ struct MenuBarView: View {
             
             // アラーム追加画面または一覧表示
             if showingAddAlarm {
-                MenuBarAddAlarmView(alarmStore: alarmStore, selectedHour: $selectedHour, selectedMinute: $selectedMinute)
+                MenuBarAddAlarmView(alarmStore: alarmStore, selectedHour: $selectedHour, selectedMinute: $selectedMinute, showingAddAlarm: $showingAddAlarm)
             } else if alarmStore.alarms.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "alarm")
@@ -394,12 +394,11 @@ struct MenuBarAddAlarmView: View {
     let alarmStore: AlarmStore
     @Binding var selectedHour: Int
     @Binding var selectedMinute: Int
+    @Binding var showingAddAlarm: Bool
     
     @State private var selectedWeekdays: Set<Weekday> = []
     @State private var hoveredHour: Int? = nil
     @State private var hideTimer: Timer? = nil
-    
-    @Environment(\.dismiss) private var dismiss
     
     var body: some View {
         VStack(spacing: 20) {
@@ -526,7 +525,7 @@ struct MenuBarAddAlarmView: View {
             // ボタン
             HStack(spacing: 12) {
                 Button("キャンセル") {
-                    dismiss()
+                    showingAddAlarm = false
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
@@ -537,7 +536,7 @@ struct MenuBarAddAlarmView: View {
                     var newAlarm = Alarm(hour: selectedHour, minute: selectedMinute)
                     newAlarm.weekdays = selectedWeekdays
                     alarmStore.addAlarm(newAlarm)
-                    dismiss()
+                    showingAddAlarm = false
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
