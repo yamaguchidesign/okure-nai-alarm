@@ -508,7 +508,7 @@ struct MenuBarAddAlarmView: View {
                     }
                     .padding(.horizontal, 4)
                 }
-                .frame(height: 150)
+                .frame(height: 220)
                 .background(Color.gray.opacity(0.1))
                 .cornerRadius(8)
             }
