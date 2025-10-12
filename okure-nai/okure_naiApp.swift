@@ -216,11 +216,7 @@ struct AlarmPanelWindow: View {
 
 // メニューバー管理クラス
 class MenuBarManager: ObservableObject {
-    @Published var showMainWindow = false
-    
-    func toggleMainWindow() {
-        showMainWindow.toggle()
-    }
+    // 将来的にメニューバー固有の機能を追加する際に使用
 }
 
 // メニューバー表示ビュー
@@ -294,9 +290,9 @@ struct MenuBarView: View {
             
             Divider()
             
-            // ボタン（アラーム追加画面でない場合のみ表示）
-            if !showingAddAlarm {
-                VStack(spacing: 8) {
+                // ボタン（アラーム追加画面でない場合のみ表示）
+                if !showingAddAlarm {
+                    VStack(spacing: 0) {
                     Button(action: { showingAddAlarm = true }) {
                         HStack {
                             Image(systemName: "plus.circle.fill")
@@ -311,19 +307,6 @@ struct MenuBarView: View {
                     }
                     .buttonStyle(.plain)
                     
-                    Button(action: { menuBarManager.toggleMainWindow() }) {
-                        HStack {
-                            Image(systemName: "gear")
-                            Text("設定")
-                        }
-                        .font(.subheadline)
-                        .foregroundColor(.primary)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 32)
-                        .background(Color.gray.opacity(0.2))
-                        .cornerRadius(6)
-                    }
-                    .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 12)
@@ -338,10 +321,6 @@ struct MenuBarView: View {
             DispatchQueue.main.async {
                 self.ensureMenuBarWindowConfigured()
             }
-        }
-        .sheet(isPresented: $menuBarManager.showMainWindow) {
-            ContentView()
-                .environmentObject(alarmManager)
         }
         .background(Color.clear)
         .onTapGesture {
