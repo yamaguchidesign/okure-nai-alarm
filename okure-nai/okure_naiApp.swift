@@ -244,12 +244,6 @@ struct MenuBarView: View {
                     .foregroundColor(.primary)
                 
                 Spacer()
-                
-                Button(action: { NSApplication.shared.terminate(nil) }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
