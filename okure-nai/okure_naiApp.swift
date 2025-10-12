@@ -260,16 +260,14 @@ struct MenuBarView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
             } else {
-                List {
-                    ForEach(alarmStore.alarms) { alarm in
-                        MenuBarAlarmRow(alarm: alarm, alarmStore: alarmStore)
-                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(alarmStore.alarms) { alarm in
+                            MenuBarAlarmRow(alarm: alarm, alarmStore: alarmStore)
+                        }
                     }
-                    .onDelete { indexSet in
-                        alarmStore.deleteAlarm(at: indexSet)
-                    }
+                    .padding(.horizontal, 16)
                 }
-                .listStyle(PlainListStyle())
                 .frame(maxHeight: 200)
             }
             
@@ -371,19 +369,28 @@ struct MenuBarAlarmRow: View {
     let alarmStore: AlarmStore
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(alarm.timeString)
                     .font(.subheadline)
                     .fontWeight(.medium)
                     .foregroundColor(alarm.isEnabled ? .primary : .secondary)
                 
-                Spacer()
+                Text(alarm.weekdayDisplayString)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
             
-            Text(alarm.weekdayDisplayString)
-                .font(.caption)
-                .foregroundColor(.secondary)
+            Spacer()
+            
+            Button(action: {
+                alarmStore.deleteAlarm(alarm)
+            }) {
+                Image(systemName: "trash")
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+            .buttonStyle(.plain)
         }
         .padding(.vertical, 4)
     }
