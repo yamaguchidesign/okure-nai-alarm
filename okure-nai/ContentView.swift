@@ -23,17 +23,16 @@ struct ContentView: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 20) {
-                // 現在時刻表示
-                Text("現在時刻: \(currentTime, style: .time)")
-                    .font(.title2)
-                    .foregroundColor(.secondary)
-                    .padding(.top, 20)
-                
                 // 説明テキスト
                 Text("指定した時刻の2分前にアラートします")
-                    .font(.subheadline)
-                    .foregroundColor(.blue)
+                    .font(.title3)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
                     .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .background(Color.blue)
+                    .cornerRadius(8)
+                    .padding(.top, 10)
                 
                 // アラーム一覧
                 if alarmStore.alarms.isEmpty {
