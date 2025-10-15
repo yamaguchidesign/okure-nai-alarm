@@ -29,6 +29,12 @@ struct ContentView: View {
                     .foregroundColor(.secondary)
                     .padding(.top, 20)
                 
+                // 説明テキスト
+                Text("指定した時刻の2分前にアラートします")
+                    .font(.subheadline)
+                    .foregroundColor(.blue)
+                    .padding(.horizontal, 20)
+                
                 // アラーム一覧
                 if alarmStore.alarms.isEmpty {
                     VStack(spacing: 20) {
@@ -98,10 +104,21 @@ struct ContentView: View {
         let currentComponents = calendar.dateComponents([.hour, .minute], from: currentTime)
         
         for alarm in enabledAlarms {
-            if currentComponents.hour == alarm.hour &&
-               currentComponents.minute == alarm.minute {
-                triggerAlarm(alarm)
-                break // 一度に一つのアラームのみ発動
+            // 設定時刻から2分引いた時刻を計算
+            var alarmComponents = DateComponents()
+            alarmComponents.hour = alarm.hour
+            alarmComponents.minute = alarm.minute
+            
+            if let alarmDate = calendar.date(from: alarmComponents),
+               let twoMinutesBefore = calendar.date(byAdding: .minute, value: -2, to: alarmDate) {
+                let targetComponents = calendar.dateComponents([.hour, .minute], from: twoMinutesBefore)
+                
+                // 2分前の時刻と現在時刻が一致したらアラーム発動
+                if currentComponents.hour == targetComponents.hour &&
+                   currentComponents.minute == targetComponents.minute {
+                    triggerAlarm(alarm)
+                    break // 一度に一つのアラームのみ発動
+                }
             }
         }
     }
