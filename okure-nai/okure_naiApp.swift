@@ -669,7 +669,7 @@ struct MenuBarAddAlarmView: View {
                     }
                     .padding(.horizontal, 4)
                 }
-                .frame(height: 220)
+                .frame(height: 280)
                 .background(Color.gray.opacity(0.1))
                 .cornerRadius(8)
             }
@@ -731,11 +731,12 @@ struct MenuBarAddAlarmView: View {
                 Button("キャンセル") {
                     showingAddAlarm = false
                 }
-                .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
                 .background(Color.gray.opacity(0.2))
+                .foregroundColor(.primary)
                 .cornerRadius(6)
+                .buttonStyle(.plain)
 
                 Button("保存") {
                     var newAlarm = Alarm(hour: selectedHour, minute: selectedMinute)
@@ -743,17 +744,18 @@ struct MenuBarAddAlarmView: View {
                     alarmStore.addAlarm(newAlarm)
                     showingAddAlarm = false
                 }
-                .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
                 .background(Color.blue)
                 .foregroundColor(.white)
                 .cornerRadius(6)
+                .buttonStyle(.plain)
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 20)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
         }
-        .padding()
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
     }
 
     private var weekdayDisplayString: String {
