@@ -572,10 +572,6 @@ struct MenuBarAddAlarmView: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            Text("アラーム追加")
-                .font(.headline)
-                .padding(.top, 20)
-
             // 時刻選択ボタン
             VStack(alignment: .leading, spacing: 8) {
                 Text("時刻選択")
@@ -635,8 +631,10 @@ struct MenuBarAddAlarmView: View {
                                     Color.clear
                                         .frame(width: 70, height: 24)
 
-                                    // 実際の30分ボタン
-                                    if hoveredHour == hour {
+                                    // 実際の30分ボタン（ホバー時または30分が選択されている時）
+                                    if hoveredHour == hour
+                                        || (selectedHour == hour && selectedMinute == 30)
+                                    {
                                         Button(action: {
                                             selectedHour = hour
                                             selectedMinute = 30
@@ -657,6 +655,12 @@ struct MenuBarAddAlarmView: View {
                                         }
                                         .buttonStyle(.plain)
                                         .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                                        .onHover { isHovering in
+                                            if isHovering {
+                                                // 30分ボタンにホバー中はタイマーを無効化
+                                                hideTimer?.invalidate()
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -727,6 +731,7 @@ struct MenuBarAddAlarmView: View {
                 Button("キャンセル") {
                     showingAddAlarm = false
                 }
+                .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
                 .background(Color.gray.opacity(0.2))
@@ -738,6 +743,7 @@ struct MenuBarAddAlarmView: View {
                     alarmStore.addAlarm(newAlarm)
                     showingAddAlarm = false
                 }
+                .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
                 .background(Color.blue)
