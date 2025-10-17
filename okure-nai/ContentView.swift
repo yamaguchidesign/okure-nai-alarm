@@ -5,8 +5,8 @@
 //  Created by 山口翔平 on 2025/10/12.
 //
 
-import SwiftUI
 import Combine
+import SwiftUI
 import UserNotifications
 
 struct ContentView: View {
@@ -17,9 +17,9 @@ struct ContentView: View {
     @State private var currentTime = Date()
     @State private var showingAddAlarm = false
     @State private var timeInput = ""
-    
+
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-    
+
     var body: some View {
         NavigationView {
             VStack(spacing: 20) {
@@ -33,41 +33,45 @@ struct ContentView: View {
                     .background(Color.blue)
                     .cornerRadius(8)
                     .padding(.top, 10)
-                
+
                 // アラーム一覧
                 if alarmStore.alarms.isEmpty {
                     VStack(spacing: 20) {
                         Image(systemName: "alarm")
                             .font(.system(size: 60))
                             .foregroundColor(.gray)
-                        
+
                         Text("アラームが設定されていません")
                             .font(.headline)
                             .foregroundColor(.gray)
-                        
-                Button(action: { showingAddAlarm = true }) {
-                    Text("アラームを追加")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(width: 200, height: 50)
-                        .background(Color.blue)
-                        .cornerRadius(10)
-                }
-                .buttonStyle(.plain)
+
+                        Button(action: { showingAddAlarm = true }) {
+                            Text("アラームを追加")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                                .frame(width: 200, height: 50)
+                                .background(Color.blue)
+                                .cornerRadius(10)
+                        }
+                        .buttonStyle(.plain)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    List {
-                        ForEach(alarmStore.alarms) { alarm in
-                            AlarmRowView(alarm: alarm, alarmStore: alarmStore)
+                    ScrollView {
+                        LazyVStack(spacing: 8) {
+                            ForEach(alarmStore.alarms) { alarm in
+                                AlarmRowView(alarm: alarm, alarmStore: alarmStore)
+                                    .background(Color.white)
+                                    .cornerRadius(8)
+                                    .shadow(color: .gray.opacity(0.2), radius: 2, x: 0, y: 1)
+                            }
                         }
-                        .onDelete(perform: alarmStore.deleteAlarm)
+                        .padding(.horizontal, 16)
                     }
-                    .listStyle(PlainListStyle())
                 }
-                
+
                 Spacer()
-                
+
                 // アラーム追加ボタン
                 Button(action: { showingAddAlarm = true }) {
                     HStack {
@@ -87,64 +91,71 @@ struct ContentView: View {
             .navigationTitle("アラーム")
         }
         .sheet(isPresented: $showingAddAlarm) {
-            AddAlarmView(alarmStore: alarmStore, selectedHour: $selectedHour, selectedMinute: $selectedMinute, timeInput: $timeInput)
+            AddAlarmView(
+                alarmStore: alarmStore, selectedHour: $selectedHour,
+                selectedMinute: $selectedMinute, timeInput: $timeInput)
         }
         .onReceive(timer) { _ in
             currentTime = Date()
             checkAlarms()
         }
     }
-    
+
     func checkAlarms() {
         let enabledAlarms = alarmStore.getEnabledAlarms()
         guard !alarmManager.showAlarmPanel else { return }
-        
+
         let calendar = Calendar.current
         let currentComponents = calendar.dateComponents([.hour, .minute], from: currentTime)
-        
+
         for alarm in enabledAlarms {
             // 設定時刻から2分引いた時刻を計算
             var alarmComponents = DateComponents()
             alarmComponents.hour = alarm.hour
             alarmComponents.minute = alarm.minute
-            
+
             if let alarmDate = calendar.date(from: alarmComponents),
-               let twoMinutesBefore = calendar.date(byAdding: .minute, value: -2, to: alarmDate) {
-                let targetComponents = calendar.dateComponents([.hour, .minute], from: twoMinutesBefore)
-                
+                let twoMinutesBefore = calendar.date(byAdding: .minute, value: -2, to: alarmDate)
+            {
+                let targetComponents = calendar.dateComponents(
+                    [.hour, .minute], from: twoMinutesBefore)
+
                 // 2分前の時刻と現在時刻が一致したらアラーム発動
-                if currentComponents.hour == targetComponents.hour &&
-                   currentComponents.minute == targetComponents.minute {
+                if currentComponents.hour == targetComponents.hour
+                    && currentComponents.minute == targetComponents.minute
+                {
                     triggerAlarm(alarm)
-                    break // 一度に一つのアラームのみ発動
+                    break  // 一度に一つのアラームのみ発動
                 }
             }
         }
     }
-    
+
     func triggerAlarm(_ alarm: Alarm) {
         // アラームマネージャーを通じてアラームを発動
         alarmManager.triggerAlarm(time: alarm.date)
-        
+
         // 通知を送信
         sendNotification()
     }
-    
+
     func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) {
+            granted, error in
             if granted {
                 print("通知権限が許可されました")
             }
         }
     }
-    
+
     func sendNotification() {
         let content = UNMutableNotificationContent()
         content.title = "アラーム"
         content.body = "設定した時刻になりました！"
         content.sound = .default
-        
-        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
     }
 }
@@ -153,24 +164,47 @@ struct ContentView: View {
 struct AlarmRowView: View {
     let alarm: Alarm
     let alarmStore: AlarmStore
-    
+
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
                 Text(alarm.timeString)
                     .font(.system(size: 32, weight: .bold))
                     .foregroundColor(alarm.isEnabled ? .primary : .secondary)
+
+                Text(alarm.weekdayDisplayString)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
             }
-            
+
             Spacer()
-            
-            Toggle("", isOn: Binding(
-                get: { alarm.isEnabled },
-                set: { _ in alarmStore.toggleAlarm(alarm) }
-            ))
-            .toggleStyle(SwitchToggleStyle())
+
+            HStack(spacing: 16) {
+                Toggle(
+                    isOn: Binding(
+                        get: { alarm.isEnabled },
+                        set: { _ in alarmStore.toggleAlarm(alarm) }
+                    )
+                ) {
+                    Text("")
+                }
+                .toggleStyle(SwitchToggleStyle())
+                .scaleEffect(1.2)
+
+                Button(action: {
+                    alarmStore.deleteAlarm(alarm)
+                }) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 18))
+                        .foregroundColor(.red)
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .padding(.vertical, 8)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.gray.opacity(0.05))
+        .cornerRadius(12)
     }
 }
 
@@ -180,23 +214,23 @@ struct AddAlarmView: View {
     @Binding var selectedHour: Int
     @Binding var selectedMinute: Int
     @Binding var timeInput: String
-    
+
     @Environment(\.dismiss) private var dismiss
-    
+
     var body: some View {
         NavigationView {
             VStack(spacing: 30) {
                 Text("アラーム時刻を設定")
                     .font(.headline)
                     .padding(.top, 20)
-                
+
                 HStack(spacing: 10) {
                     // 時
                     VStack(spacing: 8) {
                         Text(String(format: "%02d", selectedHour))
                             .font(.system(size: 72, weight: .bold))
                             .foregroundColor(.primary)
-                        
+
                         HStack(spacing: 10) {
                             Button(action: {
                                 selectedHour = (selectedHour - 1 + 24) % 24
@@ -206,7 +240,7 @@ struct AddAlarmView: View {
                                     .foregroundColor(.blue)
                             }
                             .buttonStyle(.plain)
-                            
+
                             Button(action: {
                                 selectedHour = (selectedHour + 1) % 24
                             }) {
@@ -216,24 +250,24 @@ struct AddAlarmView: View {
                             }
                             .buttonStyle(.plain)
                         }
-                        
+
                         Text("時")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }
                     .frame(width: 150)
-                    
+
                     Text(":")
                         .font(.system(size: 72, weight: .bold))
                         .foregroundColor(.secondary)
                         .padding(.bottom, 30)
-                    
+
                     // 分
                     VStack(spacing: 8) {
                         Text(String(format: "%02d", selectedMinute))
                             .font(.system(size: 72, weight: .bold))
                             .foregroundColor(.primary)
-                        
+
                         HStack(spacing: 10) {
                             Button(action: {
                                 selectedMinute = (selectedMinute - 1 + 60) % 60
@@ -243,7 +277,7 @@ struct AddAlarmView: View {
                                     .foregroundColor(.blue)
                             }
                             .buttonStyle(.plain)
-                            
+
                             Button(action: {
                                 selectedMinute = (selectedMinute + 1) % 60
                             }) {
@@ -253,7 +287,7 @@ struct AddAlarmView: View {
                             }
                             .buttonStyle(.plain)
                         }
-                        
+
                         Text("分")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
@@ -263,12 +297,12 @@ struct AddAlarmView: View {
                 .padding(30)
                 .background(Color.gray.opacity(0.1))
                 .cornerRadius(15)
-                
+
                 // 時刻直接入力
                 VStack(alignment: .leading, spacing: 8) {
                     Text("時刻直接入力（例：2345 → 23:45）")
                         .font(.headline)
-                    
+
                     TextField("2345", text: $timeInput)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                         .onChange(of: timeInput) { newValue in
@@ -276,7 +310,7 @@ struct AddAlarmView: View {
                         }
                 }
                 .padding(.horizontal, 20)
-                
+
                 Spacer()
             }
             .navigationTitle("アラーム追加")
@@ -286,7 +320,7 @@ struct AddAlarmView: View {
                         dismiss()
                     }
                 }
-                
+
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
                         let newAlarm = Alarm(hour: selectedHour, minute: selectedMinute)
@@ -297,15 +331,15 @@ struct AddAlarmView: View {
             }
         }
     }
-    
+
     private func parseTimeInput(_ input: String) {
         // 数字のみを抽出
         let numbers = input.filter { $0.isNumber }
-        
+
         if numbers.count >= 3 {
             let hourString = String(numbers.prefix(numbers.count - 2))
             let minuteString = String(numbers.suffix(2))
-            
+
             if let hour = Int(hourString), let minute = Int(minuteString) {
                 // 時間の範囲チェック
                 if hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 {
