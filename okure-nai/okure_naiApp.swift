@@ -10,55 +10,22 @@ import Combine
 import SwiftUI
 import UserNotifications
 
-// 曜日列挙型
-enum Weekday: Int, CaseIterable, Codable {
-    case sunday = 1
-    case monday = 2
-    case tuesday = 3
-    case wednesday = 4
-    case thursday = 5
-    case friday = 6
-    case saturday = 7
-
-    var displayName: String {
-        switch self {
-        case .sunday: return "日"
-        case .monday: return "月"
-        case .tuesday: return "火"
-        case .wednesday: return "水"
-        case .thursday: return "木"
-        case .friday: return "金"
-        case .saturday: return "土"
-        }
-    }
-
-    var fullDisplayName: String {
-        switch self {
-        case .sunday: return "日曜日"
-        case .monday: return "月曜日"
-        case .tuesday: return "火曜日"
-        case .wednesday: return "水曜日"
-        case .thursday: return "木曜日"
-        case .friday: return "金曜日"
-        case .saturday: return "土曜日"
-        }
-    }
-}
-
 // アラームデータモデル
 struct Alarm: Identifiable, Codable {
     let id: UUID
     var hour: Int
     var minute: Int
     var isEnabled: Bool = true
-    var weekdays: Set<Weekday> = []
+    var isCalendarAlarm: Bool = false  // カレンダー連携で自動生成されたアラームかどうか
+    var calendarEventTitle: String? = nil // カレンダー予定のタイトル（表示用）
 
-    init(hour: Int, minute: Int, isEnabled: Bool = true, weekdays: Set<Weekday> = []) {
+    init(hour: Int, minute: Int, isEnabled: Bool = true, isCalendarAlarm: Bool = false, calendarEventTitle: String? = nil) {
         self.id = UUID()
         self.hour = hour
         self.minute = minute
         self.isEnabled = isEnabled
-        self.weekdays = weekdays
+        self.isCalendarAlarm = isCalendarAlarm
+        self.calendarEventTitle = calendarEventTitle
     }
 
     var timeString: String {
@@ -72,24 +39,7 @@ struct Alarm: Identifiable, Codable {
         return Calendar.current.date(from: components) ?? Date()
     }
 
-    var isRecurring: Bool {
-        return !weekdays.isEmpty
-    }
-
-    var weekdayDisplayString: String {
-        if weekdays.isEmpty {
-            return "一回限り"
-        } else if weekdays.count == 7 {
-            return "毎日"
-        } else if weekdays == Set([Weekday.monday, .tuesday, .wednesday, .thursday, .friday]) {
-            return "平日"
-        } else if weekdays == Set([Weekday.saturday, .sunday]) {
-            return "週末"
-        } else {
-            let sortedWeekdays = weekdays.sorted { $0.rawValue < $1.rawValue }
-            return sortedWeekdays.map { $0.displayName }.joined(separator: ",")
-        }
-    }
+    // 繰り返し設定機能は廃止（常に一回限り）
 }
 
 // アラーム管理クラス
@@ -132,6 +82,13 @@ class AlarmStore: ObservableObject {
         }
     }
 
+    func disableAlarm(_ alarm: Alarm) {
+        if let index = alarms.firstIndex(where: { $0.id == alarm.id }) {
+            alarms[index].isEnabled = false
+            saveAlarms()
+        }
+    }
+
     private func saveAlarms() {
         if let encoded = try? JSONEncoder().encode(alarms) {
             userDefaults.set(encoded, forKey: alarmsKey)
@@ -149,12 +106,41 @@ class AlarmStore: ObservableObject {
     func getEnabledAlarms() -> [Alarm] {
         return alarms.filter { $0.isEnabled }
     }
+    
+    // カレンダーアラームを削除
+    func removeCalendarAlarms() {
+        alarms.removeAll { $0.isCalendarAlarm }
+        saveAlarms()
+    }
+    
+    // カレンダーアラームを追加
+    func addCalendarAlarm(_ alarm: Alarm) {
+        alarms.append(alarm)
+        saveAlarms()
+    }
 }
 
 @main
 struct okure_naiApp: App {
     @StateObject private var alarmManager = AlarmManager()
     @StateObject private var menuBarManager = MenuBarManager()
+    @StateObject private var calendarService = GoogleCalendarService()
+    @StateObject private var alarmStore = AlarmStore()
+    @StateObject private var calendarScheduler: CalendarAlarmScheduler
+    
+    init() {
+        let alarmStore = AlarmStore()
+        let calendarService = GoogleCalendarService()
+        let scheduler = CalendarAlarmScheduler(calendarService: calendarService, alarmStore: alarmStore)
+        _calendarScheduler = StateObject(wrappedValue: scheduler)
+        _alarmStore = StateObject(wrappedValue: alarmStore)
+        _calendarService = StateObject(wrappedValue: calendarService)
+        
+        // OAuthコールバックを処理
+        URLHandler.shared.setup()
+        URLHandler.shared.calendarService = calendarService
+        URLHandler.shared.calendarScheduler = scheduler
+    }
 
     var body: some Scene {
         // メニューバーアプリ
@@ -162,6 +148,9 @@ struct okure_naiApp: App {
             MenuBarView()
                 .environmentObject(alarmManager)
                 .environmentObject(menuBarManager)
+                .environmentObject(calendarService)
+                .environmentObject(calendarScheduler)
+                .environmentObject(alarmStore)
                 .onAppear {
                     // メニューバーウィンドウの動作を調整
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -175,7 +164,7 @@ struct okure_naiApp: App {
         Window("アラーム", id: "alarm-panel") {
             if let alarmTime = alarmManager.alarmTime {
                 AlarmPanelWindow(alarmTime: alarmTime) {
-                    alarmManager.dismissAlarm()
+                    alarmManager.stopAlarm()
                 }
             }
         }
@@ -223,8 +212,19 @@ class AlarmManager: ObservableObject {
     @Published var alarmTime: Date?
 
     private var alarmWindow: NSWindow?
+    private var lastTriggeredStamp: String?
+    private var onStop: (() -> Void)?
 
     func triggerAlarm(time: Date) {
+        // 同じ「分」での再発火を防ぐ（停止ボタンを押してもすぐ再表示される問題の対策）
+        let cal = Calendar.current
+        let c = cal.dateComponents([.year, .month, .day, .hour, .minute], from: time)
+        let stamp = "\(c.year ?? 0)-\(c.month ?? 0)-\(c.day ?? 0) \(c.hour ?? 0):\(c.minute ?? 0)"
+        if lastTriggeredStamp == stamp {
+            return
+        }
+        lastTriggeredStamp = stamp
+
         alarmTime = time
         showAlarmPanel = true
 
@@ -243,6 +243,16 @@ class AlarmManager: ObservableObject {
             self.alarmTime = nil
             self.closeAlarmWindow()
         }
+    }
+
+    func setOnStop(_ handler: (() -> Void)?) {
+        self.onStop = handler
+    }
+
+    func stopAlarm() {
+        onStop?()
+        onStop = nil
+        dismissAlarm()
     }
 
     private func openAlarmWindow() {
@@ -267,8 +277,9 @@ class AlarmManager: ObservableObject {
         if let alarmTime = self.alarmTime {
             let hostingView = NSHostingView(
                 rootView: AlarmPanelWindow(alarmTime: alarmTime) {
-                    self.dismissAlarm()
-                })
+                    self.stopAlarm()
+                }
+            )
             window.contentView = hostingView
         }
 
@@ -290,7 +301,7 @@ class AlarmManager: ObservableObject {
 
 struct AlarmPanelWindow: View {
     let alarmTime: Date
-    let onDismiss: () -> Void
+    let onStop: () -> Void
 
     @State private var scale: CGFloat = 0.5
     @State private var pulseScale: CGFloat = 1.0
@@ -330,7 +341,7 @@ struct AlarmPanelWindow: View {
                         .foregroundColor(.white.opacity(0.8))
                 }
 
-                Button(action: onDismiss) {
+                Button(action: onStop) {
                     Text("停止")
                         .font(.system(size: 28, weight: .bold))
                         .foregroundColor(.white)
@@ -364,10 +375,13 @@ class MenuBarManager: ObservableObject {
 struct MenuBarView: View {
     @EnvironmentObject var alarmManager: AlarmManager
     @EnvironmentObject var menuBarManager: MenuBarManager
-    @StateObject private var alarmStore = AlarmStore()
+    @EnvironmentObject var calendarService: GoogleCalendarService
+    @EnvironmentObject var calendarScheduler: CalendarAlarmScheduler
+    @EnvironmentObject var alarmStore: AlarmStore
     @State private var showingAddAlarm = false
     @State private var selectedHour = 9
     @State private var selectedMinute = 0
+    @State private var showingCalendarSettings = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -388,6 +402,24 @@ struct MenuBarView: View {
                 .foregroundColor(.secondary)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
+
+            Divider()
+            
+            // Googleカレンダー連携セクション
+            if showingCalendarSettings {
+                CalendarSettingsView(
+                    calendarService: calendarService,
+                    calendarScheduler: calendarScheduler,
+                    onDismiss: { showingCalendarSettings = false }
+                )
+            } else {
+                // カレンダー連携ステータス
+                CalendarStatusView(
+                    calendarService: calendarService,
+                    calendarScheduler: calendarScheduler,
+                    onShowSettings: { showingCalendarSettings = true }
+                )
+            }
 
             Divider()
 
@@ -444,7 +476,7 @@ struct MenuBarView: View {
                 .padding(.bottom, 12)
             }
         }
-        .frame(width: showingAddAlarm ? 320 : 280)
+        .frame(width: showingAddAlarm || showingCalendarSettings ? 320 : 280)
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
             checkAlarms()
 
@@ -464,19 +496,12 @@ struct MenuBarView: View {
         guard !alarmManager.showAlarmPanel else { return }
 
         let calendar = Calendar.current
-        let currentComponents = calendar.dateComponents([.hour, .minute, .weekday], from: Date())
+        let currentComponents = calendar.dateComponents([.hour, .minute], from: Date())
 
         for alarm in enabledAlarms {
             // 時刻のチェック
             guard currentComponents.hour == alarm.hour && currentComponents.minute == alarm.minute
             else { continue }
-
-            // 繰り返しアラームの場合、曜日をチェック
-            if alarm.isRecurring {
-                guard let currentWeekday = Weekday(rawValue: currentComponents.weekday ?? 1),
-                    alarm.weekdays.contains(currentWeekday)
-                else { continue }
-            }
 
             triggerAlarm(alarm)
             break
@@ -484,6 +509,10 @@ struct MenuBarView: View {
     }
 
     private func triggerAlarm(_ alarm: Alarm) {
+        // 「停止」されたら、このアラーム自体を無効化して再表示/再発火を防ぐ
+        alarmManager.setOnStop {
+            alarmStore.disableAlarm(alarm)
+        }
         alarmManager.triggerAlarm(time: alarm.date)
         sendNotification()
     }
@@ -521,12 +550,20 @@ struct MenuBarAlarmRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(alarm.timeString)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(alarm.isEnabled ? .primary : .secondary)
+                HStack(spacing: 4) {
+                    Text(alarm.timeString)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(alarm.isEnabled ? .primary : .secondary)
+                    
+                    if alarm.isCalendarAlarm {
+                        Image(systemName: "calendar")
+                            .font(.caption2)
+                            .foregroundColor(.blue)
+                    }
+                }
 
-                Text(alarm.weekdayDisplayString)
+                Text(alarm.isCalendarAlarm ? (alarm.calendarEventTitle ?? "カレンダー予定") : "一回限り")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -545,14 +582,17 @@ struct MenuBarAlarmRow: View {
                 .toggleStyle(SwitchToggleStyle())
                 .scaleEffect(0.8)
 
-                Button(action: {
-                    alarmStore.deleteAlarm(alarm)
-                }) {
-                    Image(systemName: "trash")
-                        .font(.caption)
-                        .foregroundColor(.red)
+                // カレンダーアラームは削除ボタンを表示しない（自動管理のため）
+                if !alarm.isCalendarAlarm {
+                    Button(action: {
+                        alarmStore.deleteAlarm(alarm)
+                    }) {
+                        Image(systemName: "trash")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
         .padding(.vertical, 4)
@@ -566,7 +606,6 @@ struct MenuBarAddAlarmView: View {
     @Binding var selectedMinute: Int
     @Binding var showingAddAlarm: Bool
 
-    @State private var selectedWeekdays: Set<Weekday> = []
     @State private var hoveredHour: Int? = nil
     @State private var hideTimer: Timer? = nil
 
@@ -680,50 +719,6 @@ struct MenuBarAddAlarmView: View {
                 .font(.subheadline)
                 .foregroundColor(.secondary)
 
-            // 曜日選択
-            VStack(alignment: .leading, spacing: 8) {
-                Text("繰り返し設定")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-
-                HStack(spacing: 4) {
-                    ForEach(Weekday.allCases, id: \.rawValue) { weekday in
-                        Button(action: {
-                            if selectedWeekdays.contains(weekday) {
-                                selectedWeekdays.remove(weekday)
-                            } else {
-                                selectedWeekdays.insert(weekday)
-                            }
-                        }) {
-                            Text(weekday.displayName)
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .foregroundColor(
-                                    selectedWeekdays.contains(weekday) ? .white : .primary
-                                )
-                                .frame(width: 24, height: 24)
-                                .background(
-                                    selectedWeekdays.contains(weekday)
-                                        ? Color.blue : Color.gray.opacity(0.2)
-                                )
-                                .cornerRadius(12)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                if selectedWeekdays.isEmpty {
-                    Text("一回限り")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                } else {
-                    Text(weekdayDisplayString)
-                        .font(.caption)
-                        .foregroundColor(.blue)
-                }
-            }
-            .padding(.horizontal, 20)
-
             Spacer()
 
             // ボタン
@@ -740,7 +735,6 @@ struct MenuBarAddAlarmView: View {
 
                 Button("保存") {
                     var newAlarm = Alarm(hour: selectedHour, minute: selectedMinute)
-                    newAlarm.weekdays = selectedWeekdays
                     alarmStore.addAlarm(newAlarm)
                     showingAddAlarm = false
                 }
@@ -758,24 +752,279 @@ struct MenuBarAddAlarmView: View {
         .padding(.vertical, 8)
     }
 
-    private var weekdayDisplayString: String {
-        if selectedWeekdays.isEmpty {
-            return "一回限り"
-        } else if selectedWeekdays.count == 7 {
-            return "毎日"
-        } else if selectedWeekdays
-            == Set([Weekday.monday, .tuesday, .wednesday, .thursday, .friday])
-        {
-            return "平日"
-        } else if selectedWeekdays == Set([Weekday.saturday, .sunday]) {
-            return "週末"
-        } else {
-            let sortedWeekdays = selectedWeekdays.sorted { $0.rawValue < $1.rawValue }
-            return sortedWeekdays.map { $0.displayName }.joined(separator: ",")
-        }
-    }
-
     private func isTimeSelected(hour: Int, minute: Int) -> Bool {
         return selectedHour == hour && selectedMinute == minute
+    }
+}
+
+// カレンダー連携ステータスビュー
+struct CalendarStatusView: View {
+    @ObservedObject var calendarService: GoogleCalendarService
+    @ObservedObject var calendarScheduler: CalendarAlarmScheduler
+    let onShowSettings: () -> Void
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: calendarService.isAuthenticated ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .foregroundColor(calendarService.isAuthenticated ? .green : .gray)
+                
+                Text("Googleカレンダー")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            
+            if calendarService.isAuthenticated {
+                if calendarScheduler.isEnabled {
+                    HStack {
+                        Text("連携中")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                        
+                        Spacer()
+                        
+                        if let lastSync = calendarScheduler.lastSyncDate {
+                            Text("最終同期: \(formatDate(lastSync))")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                } else {
+                    Text("連携が無効です")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 16)
+                }
+            } else {
+                Text("未認証")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 16)
+            }
+            
+            HStack(spacing: 8) {
+                Button("今すぐ同期") {
+                    Task {
+                        await calendarScheduler.syncTodayAlarms()
+                    }
+                }
+                .font(.caption)
+                .frame(maxWidth: .infinity)
+                .frame(height: 24)
+                .buttonStyle(.bordered)
+                .disabled(!(calendarService.isAuthenticated && calendarScheduler.isEnabled))
+                
+                Button(action: onShowSettings) {
+                    HStack {
+                        Image(systemName: "gear")
+                        Text("設定")
+                    }
+                    .font(.caption)
+                    .foregroundColor(.blue)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 24)
+                    .background(Color.blue.opacity(0.1))
+                    .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+        }
+        .padding(.vertical, 8)
+    }
+    
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
+    }
+}
+
+// カレンダー設定ビュー
+struct CalendarSettingsView: View {
+    @ObservedObject var calendarService: GoogleCalendarService
+    @ObservedObject var calendarScheduler: CalendarAlarmScheduler
+    let onDismiss: () -> Void
+    @State private var clientId: String = ""
+    @State private var clientSecret: String = ""
+    @State private var showingOAuth = false
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // ヘッダー
+            HStack {
+                Button(action: onDismiss) {
+                    Image(systemName: "chevron.left")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                
+                Text("Googleカレンダー設定")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            
+            Divider()
+            
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // 認証情報入力
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("認証情報")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                        
+                        Text("Google Cloud Consoleで取得したClient IDとClient Secretを入力してください")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        
+                        TextField("Client ID", text: $clientId)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption)
+                        
+                        SecureField("Client Secret", text: $clientSecret)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption)
+                        
+                        Button("認証情報を保存") {
+                            calendarService.setCredentials(clientId: clientId, clientSecret: clientSecret)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .padding(.horizontal, 16)
+                    
+                    Divider()
+                    
+                    // 認証状態
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("認証状態")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                            
+                            Spacer()
+                            
+                            if calendarService.isAuthenticated {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.green)
+                                    Text("認証済み")
+                                        .font(.caption2)
+                                        .foregroundColor(.green)
+                                }
+                            } else {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.red)
+                                    Text("未認証")
+                                        .font(.caption2)
+                                        .foregroundColor(.red)
+                                }
+                            }
+                        }
+                        
+                        if !calendarService.isAuthenticated {
+                            Button("Googleで認証") {
+                                if let url = calendarService.getAuthorizationURL() {
+                                    NSWorkspace.shared.open(url)
+                                } else {
+                                    // Client IDが設定されていない場合のエラーメッセージ
+                                    let alert = NSAlert()
+                                    alert.messageText = "認証情報が設定されていません"
+                                    alert.informativeText = "Client IDとClient Secretを設定画面で入力してください。"
+                                    alert.alertStyle = .warning
+                                    alert.addButton(withTitle: "OK")
+                                    alert.runModal()
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                        } else {
+                            Button("ログアウト") {
+                                calendarService.logout()
+                                calendarScheduler.disable()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    
+                    Divider()
+                    
+                    // 連携設定
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("自動アラーム設定")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                            
+                            Spacer()
+                            
+                            Toggle("", isOn: Binding(
+                                get: { calendarScheduler.isEnabled },
+                                set: { enabled in
+                                    if enabled {
+                                        calendarScheduler.enable()
+                                    } else {
+                                        calendarScheduler.disable()
+                                    }
+                                }
+                            ))
+                            .toggleStyle(SwitchToggleStyle())
+                            .scaleEffect(0.8)
+                        }
+                        
+                        Text("毎日00:00にその日の予定を取得し、開始時刻の2分前にアラームを自動設定します")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        
+                        if let lastSync = calendarScheduler.lastSyncDate {
+                            Text("最終同期: \(formatDateTime(lastSync))")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        if let nextCheck = calendarScheduler.nextCheckDate {
+                            Text("次回チェック: \(formatDateTime(nextCheck))")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Button("今すぐ同期") {
+                            Task {
+                                await calendarScheduler.syncTodayAlarms()
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(!calendarService.isAuthenticated)
+                    }
+                    .padding(.horizontal, 16)
+                }
+                .padding(.vertical, 8)
+            }
+        }
+        .frame(height: 400)
+        .onAppear {
+            // 保存済みの認証情報を読み込む
+            clientId = UserDefaults.standard.string(forKey: "GoogleCalendarClientId") ?? ""
+            clientSecret = UserDefaults.standard.string(forKey: "GoogleCalendarClientSecret") ?? ""
+        }
+    }
+    
+    private func formatDateTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM/dd HH:mm"
+        return formatter.string(from: date)
     }
 }
