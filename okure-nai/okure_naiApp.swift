@@ -987,6 +987,22 @@ struct CalendarSettingsView: View {
                         Text("毎日00:00にその日の予定を取得し、開始時刻の2分前にアラームを自動設定します")
                             .font(.caption2)
                             .foregroundColor(.secondary)
+
+                        HStack {
+                            Text("ゲストがいる予定のみアラームを有効にする")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Toggle("", isOn: Binding(
+                                get: { calendarScheduler.onlyEventsWithGuests },
+                                set: { value in
+                                    calendarScheduler.onlyEventsWithGuests = value
+                                }
+                            ))
+                            .toggleStyle(SwitchToggleStyle())
+                            .scaleEffect(0.8)
+                        }
+                        .disabled(!calendarService.isAuthenticated)
                         
                         if let lastSync = calendarScheduler.lastSyncDate {
                             Text("最終同期: \(formatDateTime(lastSync))")

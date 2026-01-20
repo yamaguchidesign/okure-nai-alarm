@@ -14,6 +14,7 @@ struct CalendarEvent: Identifiable, Codable {
     let summary: String
     let start: EventDateTime
     let end: EventDateTime?
+    let attendees: [Attendee]?
     
     struct EventDateTime: Codable {
         let dateTime: String?
@@ -30,6 +31,13 @@ struct CalendarEvent: Identifiable, Codable {
             }
             return nil
         }
+    }
+    
+    struct Attendee: Codable {
+        let email: String?
+        let responseStatus: String?
+        let `self`: Bool?
+        let resource: Bool?
     }
 }
 
@@ -323,7 +331,12 @@ class GoogleCalendarService: ObservableObject {
             URLQueryItem(name: "timeMin", value: timeMin),
             URLQueryItem(name: "timeMax", value: timeMax),
             URLQueryItem(name: "singleEvents", value: "true"),
-            URLQueryItem(name: "orderBy", value: "startTime")
+            URLQueryItem(name: "orderBy", value: "startTime"),
+            // ゲスト判定にattendeesが必要なため取得フィールドを明示
+            URLQueryItem(
+                name: "fields",
+                value: "items(id,summary,start,end,attendees(email,responseStatus,self,resource))"
+            )
         ]
         
         guard let url = components?.url else {

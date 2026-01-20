@@ -11,6 +11,7 @@ import Combine
 // カレンダー連携アラーム管理クラス
 class CalendarAlarmScheduler: ObservableObject {
     @Published var isEnabled = false
+    @Published var onlyEventsWithGuests = true
     @Published var lastSyncDate: Date?
     @Published var nextCheckDate: Date?
     
@@ -38,6 +39,12 @@ class CalendarAlarmScheduler: ObservableObject {
     // 設定を読み込む
     private func loadSettings() {
         isEnabled = UserDefaults.standard.bool(forKey: "CalendarAlarmEnabled")
+        // 既存ユーザーは「従来通り全予定」でも使えるように、未設定時はtrue（今回のデフォルト）
+        if UserDefaults.standard.object(forKey: "CalendarAlarmOnlyEventsWithGuests") == nil {
+            onlyEventsWithGuests = true
+        } else {
+            onlyEventsWithGuests = UserDefaults.standard.bool(forKey: "CalendarAlarmOnlyEventsWithGuests")
+        }
         if let lastSync = UserDefaults.standard.object(forKey: "CalendarAlarmLastSync") as? Date {
             lastSyncDate = lastSync
         }
@@ -46,6 +53,7 @@ class CalendarAlarmScheduler: ObservableObject {
     // 設定を保存
     private func saveSettings() {
         UserDefaults.standard.set(isEnabled, forKey: "CalendarAlarmEnabled")
+        UserDefaults.standard.set(onlyEventsWithGuests, forKey: "CalendarAlarmOnlyEventsWithGuests")
         if let lastSync = lastSyncDate {
             UserDefaults.standard.set(lastSync, forKey: "CalendarAlarmLastSync")
         }
@@ -149,6 +157,10 @@ class CalendarAlarmScheduler: ObservableObject {
             await MainActor.run {
                 // 各イベントの開始時刻の2分前にアラームを設定
                 for event in events {
+                    // 「ゲストがいる予定でのみアラームを有効にする」設定がONの場合のみフィルタ
+                    if onlyEventsWithGuests && guestCountExcludingSelf(event) < 1 {
+                        continue
+                    }
                     guard let startDate = event.start.startDate else { continue }
                     
                     // 開始時刻が未来であることを確認
@@ -192,6 +204,22 @@ class CalendarAlarmScheduler: ObservableObject {
         } catch {
             print("カレンダー同期エラー: \(error.localizedDescription)")
         }
+    }
+
+    private func guestCountExcludingSelf(_ event: CalendarEvent) -> Int {
+        guard let attendees = event.attendees else { return 0 }
+
+        var count = 0
+        for attendee in attendees {
+            // 自分は除外
+            if attendee.`self` == true { continue }
+
+            // declinedは除外。それ以外(accepted/tentative/needsAction/不明)はカウント
+            if let status = attendee.responseStatus, status == "declined" { continue }
+
+            count += 1
+        }
+        return count
     }
     
     // 古いカレンダーアラームを削除
